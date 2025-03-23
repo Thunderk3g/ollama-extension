@@ -28,15 +28,32 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
               status: 200,
               headers: { 'Content-Type': 'application/json' }
             });
+            console.log(`Ollama Bridge: Request to ${url} succeeded`, event.detail.data);
             resolve(mockResponse);
           } else {
-            reject(new Error(event.detail.error || 'Unknown error'));
+            // Create a more detailed error message
+            let errorMessage = event.detail.error || 'Unknown error';
+            
+            // Check for specific error types
+            if (errorMessage.includes('403')) {
+              errorMessage = `CORS Error: The server returned a 403 Forbidden response. Check that Ollama is running and properly configured to accept requests.`;
+            } else if (errorMessage.includes('Invalid URL')) {
+              errorMessage = `${errorMessage}. Make sure you're using a supported API endpoint.`;
+            } else if (errorMessage.includes('model')) {
+              errorMessage = `${errorMessage}. Make sure your request includes a valid 'model' parameter.`;
+            }
+            
+            console.error(`Ollama Bridge: Request to ${url} failed: ${errorMessage}`);
+            reject(new Error(errorMessage));
           }
         };
         
         // Set up listener for this request
         document.getElementById('ollama-bridge-element')
           .addEventListener('ollama-response', handleResponse);
+        
+        // Log request for debugging
+        console.log(`Ollama Bridge: Sending request to ${url}`, options);
         
         // Send the request
         document.getElementById('ollama-bridge-element')
@@ -91,6 +108,35 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
         version: '1.0.0',
         timestamp: new Date().toISOString()
       };
+    },
+    
+    // Helper to check if a URL is a valid Ollama API path
+    isValidApiPath: (url) => {
+      if (!url) return false;
+      
+      // List of supported API paths
+      const validPaths = ['/api/chat', '/api/generate', '/api/tags', '/api/resume'];
+      
+      // Check if it's a relative path we support
+      if (typeof url === 'string' && validPaths.some(path => url === path || url.startsWith(path))) {
+        return true;
+      }
+      
+      // Check if it's a full Ollama URL
+      try {
+        const parsedUrl = new URL(url);
+        if (
+          (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') && 
+          parsedUrl.port === '11434' &&
+          parsedUrl.pathname.startsWith('/api/')
+        ) {
+          return true;
+        }
+      } catch (e) {
+        // Not a valid URL
+      }
+      
+      return false;
     }
   };
   
@@ -121,13 +167,46 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
     const url = resource instanceof Request ? resource.url : resource;
     
     // Check if this is an Ollama API request
-    if (url.includes('localhost:11434') || url.includes('127.0.0.1:11434') || url.includes('/api/')) {
+    if (url.includes('localhost:11434') || 
+        url.includes('127.0.0.1:11434') || 
+        url.startsWith('/api/')) {
       try {
+        // Log the request attempt for debugging 
+        console.log('Ollama Bridge: Intercepting request to', url, options);
+        
+        // Validate if it's a supported API path
+        if (!window.OllamaBridge.isValidApiPath(url)) {
+          console.warn(`Ollama Bridge: Unsupported API path: ${url}`);
+        }
+        
+        // Special handling for specific APIs to ensure correct format
+        if (url === '/api/chat' || url.endsWith('/api/chat')) {
+          const requestBody = options.body ? 
+            (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : 
+            {};
+            
+          // Validate request has required fields
+          if (!requestBody.model) {
+            console.error('Ollama Bridge: Missing required "model" parameter for chat request');
+          }
+          if (!requestBody.messages || !Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
+            console.error('Ollama Bridge: Chat requests require a non-empty "messages" array');
+          }
+        }
+        
         // Use OllamaBridge instead
         return await window.OllamaBridge.sendRequest(url, options);
       } catch (error) {
         // If bridge fails, log error and fall back to original fetch
         console.error('Ollama Bridge fetch error:', error);
+        
+        // Don't fall back for certain errors - they need to be fixed in the calling code
+        if (error.message.includes('403') || 
+            error.message.includes('Invalid URL') || 
+            error.message.includes('Missing required')) {
+          throw error;
+        }
+        
         return originalFetch.apply(this, arguments);
       }
     }

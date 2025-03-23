@@ -1,0 +1,162 @@
+# Instructions for Fixing the AI Portfolio Client Code
+
+Hello brother! We've fixed the issues in our extension, but you also need to make some changes to your AI portfolio code for it to work properly with the Ollama Bridge extension.
+
+## Changes Needed in client.ts
+
+1. **Modify the `generateChatCompletion` function:**
+
+```typescript
+export async function generateChatCompletion(params: OllamaChatParams): Promise<string> {
+  // First check if extension is available
+  const isExtensionAvailable = typeof window !== 'undefined' && 
+                               window.OllamaBridge && 
+                               window.OllamaBridge.isAvailable;
+  
+  // Determine endpoint based on extension availability
+  const endpoint = isExtensionAvailable ? '/api/chat' : await discoverOllamaEndpoint();
+  
+  if (!endpoint) {
+    return "Couldn't connect to Ollama. Please make sure it's running locally.";
+  }
+
+  try {
+    // Make sure model is always included in the request
+    if (!params.model) {
+      throw new Error("Missing required 'model' parameter");
+    }
+    
+    // For extension, use a relative URL; otherwise use the full URL
+    const url = isExtensionAvailable ? '/api/chat' : `${endpoint}/api/chat`;
+    console.log(`Making request to ${url} with model: ${params.model}`);
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...params,
+        stream: false, // We'll handle the full response directly
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama API error: ${errorText || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.message?.content || '';
+  } catch (error) {
+    console.error('Error generating chat completion:', error);
+    return `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  }
+}
+```
+
+2. **Create a helper function for API paths:**
+
+```typescript
+// Helper to get the correct API path based on extension availability
+export function getApiPath(path: string): string {
+  const isExtensionAvailable = typeof window !== 'undefined' && 
+                              window.OllamaBridge && 
+                              window.OllamaBridge.isAvailable;
+  
+  // If using the extension, use relative paths
+  if (isExtensionAvailable) {
+    return path; // e.g. '/api/chat' or '/api/resume'
+  }
+  
+  // Otherwise use full URLs with the endpoint
+  return `${discoverOllamaEndpoint()}${path}`;
+}
+```
+
+3. **Update the `sendChatMessage` function:**
+
+```typescript
+export async function sendChatMessage(
+  messages: ChatMessage[], 
+  model: string, 
+  agentType: string
+): Promise<string> {
+  try {
+    // Always include the model parameter
+    if (!model) {
+      throw new Error("Missing required 'model' parameter");
+    }
+    
+    // Format the messages for Ollama's API format
+    const formattedMessages = messages.map(m => ({
+      role: m.role as 'user' | 'assistant' | 'system',
+      content: m.content
+    }));
+    
+    // Add a system message based on agent type
+    if (agentType === 'resume') {
+      // For resume agent, use the resume endpoint
+      const resumeResponse = await fetch('/api/resume', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: formattedMessages
+        })
+      });
+      
+      if (!resumeResponse.ok) {
+        const errorText = await resumeResponse.text();
+        throw new Error(`Resume API error: ${errorText || resumeResponse.statusText}`);
+      }
+      
+      const data = await resumeResponse.json();
+      return data.message?.content || '';
+    }
+    
+    // For other agent types, use the chat endpoint
+    const response = await generateChatCompletion({
+      model,
+      messages: formattedMessages,
+      options: {
+        temperature: 0.7
+      }
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Error sending chat message:', error);
+    
+    // Check if we're on HTTPS and might need the extension
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    let extensionMessage = '';
+    
+    if (isHttps) {
+      extensionMessage = `\n4. If you're accessing this site via HTTPS, install the Ollama Bridge extension to connect securely to your local Ollama instance`;
+    }
+    
+    return `Sorry, I couldn't connect to the Ollama server. Please make sure:
+    
+1. Ollama is installed on your system (https://ollama.com)
+2. The Ollama service is running (run 'ollama serve' in a terminal)
+3. Your browser isn't blocking connections to the Ollama API${extensionMessage}
+
+Error details: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  }
+}
+```
+
+## Summary of Changes
+
+1. Always include the `model` parameter in requests
+2. Use relative URLs when the extension is detected (`/api/chat` instead of `http://localhost:11434/api/chat`)
+3. Ensure the messages array is properly formatted
+4. Add proper error handling
+5. Check for extension availability before determining which URL pattern to use
+
+These changes should fix the 403 error and the "Cannot read properties of null (reading 'model')" error.
+
+Let me know if you need any clarification! 

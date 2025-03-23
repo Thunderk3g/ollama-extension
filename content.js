@@ -4,6 +4,13 @@ const OLLAMA_HOST_PATTERNS = [
   'localhost:11434',
   '127.0.0.1:11434'
 ];
+// Add known custom endpoints
+const CUSTOM_API_ENDPOINTS = [
+  '/api/resume',
+  '/api/chat',
+  '/api/tags',
+  '/api/generate'
+];
 const EXTENSION_VERSION = '1.0.0';
 
 // Notify the page that the extension is installed
@@ -25,20 +32,34 @@ bridgeElement.addEventListener('ollama-request', (event) => {
   let parsedUrl;
   
   try {
-    parsedUrl = new URL(url);
-    // For full URLs like http://localhost:11434/api/...
-    if (OLLAMA_HOST_PATTERNS.some(host => parsedUrl.host === host)) {
-      endpoint = parsedUrl.pathname + parsedUrl.search;
-    } else if (url.startsWith(OLLAMA_API_PATH)) {
-      // For relative URLs like /api/...
+    // Check if this is a custom endpoint we know about
+    if (CUSTOM_API_ENDPOINTS.some(ep => url === ep || url.startsWith(ep))) {
       endpoint = url;
+      console.log(`Ollama Bridge: Recognized custom endpoint: ${endpoint}`);
+    } else {
+      // Try to parse as a full URL
+      try {
+        parsedUrl = new URL(url);
+        // For full URLs like http://localhost:11434/api/...
+        if (OLLAMA_HOST_PATTERNS.some(host => parsedUrl.host === host)) {
+          endpoint = parsedUrl.pathname + parsedUrl.search;
+          console.log(`Ollama Bridge: Extracted endpoint from URL: ${endpoint}`);
+        } 
+      } catch (e) {
+        // Not a full URL, check if it's a relative API path
+        if (url.startsWith(OLLAMA_API_PATH)) {
+          // For relative URLs like /api/...
+          endpoint = url;
+          console.log(`Ollama Bridge: Using relative API path: ${endpoint}`);
+        }
+      }
     }
   } catch (e) {
-    console.warn('Ollama Bridge: Could not parse URL', url);
+    console.warn('Ollama Bridge: Could not parse URL', url, e);
     bridgeElement.dispatchEvent(new CustomEvent('ollama-response', {
       detail: {
         success: false,
-        error: 'Invalid URL: ' + url,
+        error: `Invalid URL: ${url} - ${e.message}`,
         requestId
       }
     }));
@@ -66,12 +87,23 @@ bridgeElement.addEventListener('ollama-request', (event) => {
       data = typeof options.body === 'string' 
         ? JSON.parse(options.body) 
         : options.body;
+      
+      console.log(`Ollama Bridge: Parsed request body for ${endpoint}:`, data);
     } catch (e) {
       console.warn('Ollama Bridge: Failed to parse request body', e);
+      bridgeElement.dispatchEvent(new CustomEvent('ollama-response', {
+        detail: {
+          success: false,
+          error: `Failed to parse request body: ${e.message}`,
+          requestId
+        }
+      }));
+      return;
     }
   }
   
   // Forward to background script
+  console.log(`Ollama Bridge: Forwarding ${method} request to ${endpoint}`);
   chrome.runtime.sendMessage({
     type: 'OLLAMA_API_REQUEST',
     endpoint,
@@ -93,6 +125,7 @@ bridgeElement.addEventListener('ollama-request', (event) => {
     }
     
     // Send the response back to the page
+    console.log(`Ollama Bridge: Received response for ${endpoint}`, response);
     bridgeElement.dispatchEvent(new CustomEvent('ollama-response', {
       detail: {
         success: response.success,
