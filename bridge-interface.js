@@ -197,6 +197,15 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
         // Log the request attempt for debugging 
         console.log('Ollama Bridge: Intercepting request to', url, options);
         
+        // Ensure the options contain method, default based on endpoint
+        const getEndpoints = ['/api/tags', '/api/ps', '/api/version'];
+        const defaultMethod = url.match(/\/(tags|ps|version)($|\?)/) ? 'GET' : 'POST';
+        
+        const enhancedOptions = {
+          ...options,
+          method: options.method || defaultMethod // Use the original method or default based on endpoint
+        };
+        
         // Validate if it's a supported API path
         if (!window.OllamaBridge.isValidApiPath(url)) {
           console.warn(`Ollama Bridge: Unsupported API path: ${url}`);
@@ -204,8 +213,8 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
         
         // Special handling for specific APIs to ensure correct format
         if (url === '/api/chat' || url.endsWith('/api/chat')) {
-          const requestBody = options.body ? 
-            (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : 
+          const requestBody = enhancedOptions.body ? 
+            (typeof enhancedOptions.body === 'string' ? JSON.parse(enhancedOptions.body) : enhancedOptions.body) : 
             {};
             
           // Validate request has required fields
@@ -219,8 +228,8 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
           }
         }
         
-        // Use OllamaBridge instead
-        return await window.OllamaBridge.sendRequest(url, options);
+        // Use OllamaBridge instead with enhanced options
+        return await window.OllamaBridge.sendRequest(url, enhancedOptions);
       } catch (error) {
         // If bridge fails, log error and fall back to original fetch
         console.error('Ollama Bridge fetch error:', error);

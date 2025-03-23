@@ -79,7 +79,15 @@ bridgeElement.addEventListener('ollama-request', (event) => {
   }
   
   // Prepare request data
-  let method = options?.method || 'GET';
+  let method = options?.method; // Keep the original method
+  const getEndpoints = ['/api/tags', '/api/ps', '/api/version'];
+  
+  // If no method specified, determine based on endpoint
+  if (!method) {
+    method = getEndpoints.includes(endpoint) ? 'GET' : 'POST';
+    console.log(`Ollama Bridge: Defaulting to ${method} method for ${endpoint}`);
+  }
+  
   let data = null;
   
   if (options?.body) {

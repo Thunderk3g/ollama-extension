@@ -104,6 +104,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Function to handle Ollama API requests
 async function handleOllamaRequest(endpoint, method, data) {
   try {
+    // SAFEGUARD: Use correct HTTP methods based on Ollama API specification
+    // GET endpoints: /api/tags, /api/ps, /api/version
+    // POST endpoints: /api/chat, /api/generate, etc.
+    const getEndpoints = ['/api/tags', '/api/ps', '/api/version'];
+    
+    if (getEndpoints.includes(endpoint)) {
+      if (method !== 'GET') {
+        console.log(`Ollama Bridge: Using GET method instead of ${method || 'undefined'} for ${endpoint}`);
+        method = 'GET';
+      }
+    } else if (!method) {
+      // For non-GET endpoints, default to POST if method isn't specified
+      console.log(`Ollama Bridge: Defaulting to POST method for ${endpoint}`);
+      method = 'POST';
+    }
+    
     // Get current settings
     const settings = await chrome.storage.local.get(['ollamaUrl', 'isEnabled']);
     
@@ -208,19 +224,22 @@ async function handleOllamaRequest(endpoint, method, data) {
     
     // Configure fetch options with CORS headers
     const options = {
-      method: method || 'GET',
+      method: method,  // Use the method determined earlier
       headers: {
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
         'Origin': PORTFOLIO_SITE
       },
       mode: 'cors'
     };
     
-    // Add body for POST/PUT requests
-    if (data && (method === 'POST' || method === 'PUT')) {
+    // Add content-type and body for methods that support it
+    if (['POST', 'PUT', 'PATCH'].includes(method) && data) {
+      options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(data);
     }
+    
+    // Log the complete request details for debugging
+    console.log(`Ollama Bridge: Sending ${options.method} request to ${url} with options:`, options);
     
     // Make the request to Ollama
     const response = await fetch(url, options);
@@ -236,8 +255,8 @@ async function handleOllamaRequest(endpoint, method, data) {
         useLegacyApi = true;
         CUSTOM_ENDPOINTS['/api/chat'] = '/api/generate';
         
-        // Try again with the generate endpoint
-        return await handleOllamaRequest(endpoint, method, data);
+        // Try again with the generate endpoint - explicitly use POST method
+        return await handleOllamaRequest(endpoint, 'POST', data);
       }
       
       throw new Error(`Ollama API error (${response.status}): ${errorText}`);
