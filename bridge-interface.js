@@ -36,11 +36,13 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
             
             // Check for specific error types
             if (errorMessage.includes('403')) {
-              errorMessage = `CORS Error: The server returned a 403 Forbidden response. Check that Ollama is running and properly configured to accept requests.`;
+              errorMessage = `CORS Error: The server returned a 403 Forbidden response. This may be due to CORS restrictions. Try adding "Origin: http://localhost:11434" header to your Ollama server or restart Ollama with: "OLLAMA_ORIGINS=* ollama serve"`;
             } else if (errorMessage.includes('Invalid URL')) {
               errorMessage = `${errorMessage}. Make sure you're using a supported API endpoint.`;
             } else if (errorMessage.includes('model')) {
               errorMessage = `${errorMessage}. Make sure your request includes a valid 'model' parameter.`;
+            } else if (errorMessage.includes('404')) {
+              errorMessage = `${errorMessage}. The API endpoint doesn't exist or might have changed in your Ollama version.`;
             }
             
             console.error(`Ollama Bridge: Request to ${url} failed: ${errorMessage}`);
@@ -51,6 +53,20 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
         // Set up listener for this request
         document.getElementById('ollama-bridge-element')
           .addEventListener('ollama-response', handleResponse);
+        
+        // If this is a chat request, make sure model is included
+        if ((url === '/api/chat' || url.endsWith('/api/chat')) && options.body) {
+          try {
+            const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+            if (!body.model) {
+              console.error('Ollama Bridge: Missing required "model" parameter for chat request');
+              reject(new Error('Missing required "model" parameter for chat request'));
+              return;
+            }
+          } catch (e) {
+            console.warn('Ollama Bridge: Could not parse request body', e);
+          }
+        }
         
         // Log request for debugging
         console.log(`Ollama Bridge: Sending request to ${url}`, options);
@@ -115,7 +131,14 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
       if (!url) return false;
       
       // List of supported API paths
-      const validPaths = ['/api/chat', '/api/generate', '/api/tags', '/api/resume'];
+      const validPaths = [
+        '/api/chat', 
+        '/api/generate', 
+        '/api/tags', 
+        '/api/resume',
+        '/api/version',
+        '/api/pull'
+      ];
       
       // Check if it's a relative path we support
       if (typeof url === 'string' && validPaths.some(path => url === path || url.startsWith(path))) {
@@ -188,9 +211,11 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
           // Validate request has required fields
           if (!requestBody.model) {
             console.error('Ollama Bridge: Missing required "model" parameter for chat request');
+            throw new Error('Missing required "model" parameter for chat request');
           }
           if (!requestBody.messages || !Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
             console.error('Ollama Bridge: Chat requests require a non-empty "messages" array');
+            throw new Error('Chat requests require a non-empty "messages" array');
           }
         }
         
@@ -202,6 +227,7 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
         
         // Don't fall back for certain errors - they need to be fixed in the calling code
         if (error.message.includes('403') || 
+            error.message.includes('404') ||
             error.message.includes('Invalid URL') || 
             error.message.includes('Missing required')) {
           throw error;
