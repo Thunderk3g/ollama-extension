@@ -1,0 +1,3 @@
+This is a placeholder. Replace with an actual 128x128 PNG image.
+- Create a 128x128 icon showing a bridge or connection symbol
+- Save as icons/icon128.png (remove the .txt extension) 

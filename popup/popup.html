@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ollama Bridge</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Ollama Bridge</h1>
+      <div class="toggle-container">
+        <label class="switch">
+          <input type="checkbox" id="enabled-toggle" checked>
+          <span class="slider round"></span>
+        </label>
+        <span id="status-text">Enabled</span>
+      </div>
+    </header>
+    
+    <div class="content">
+      <div class="form-group">
+        <label for="ollama-url">Ollama API URL</label>
+        <input type="text" id="ollama-url" placeholder="http://localhost:11434">
+        <button id="save-url" class="btn">Save</button>
+      </div>
+      
+      <div class="status-container">
+        <div class="status-item">
+          <span class="status-label">Connection:</span>
+          <span id="connection-status">Checking...</span>
+        </div>
+      </div>
+      
+      <div class="info-box">
+        <p>This extension allows your browser to connect to your local Ollama instance from websites like <a href="https://portfolio-flame-five.vercel.app" target="_blank">portfolio-flame-five.vercel.app</a></p>
+      </div>
+    </div>
+    
+    <footer>
+      <button id="test-connection" class="btn">Test Connection</button>
+    </footer>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html> 
