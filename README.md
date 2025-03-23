@@ -82,6 +82,16 @@ To test if the extension is working:
 - `popup/` - Contains the extension popup UI
 - `icons/` - Extension icons
 
+## Customizing for Your Projects
+
+Need to adapt this extension for your own website or project? Check out the [CUSTOMIZATION.md](./CUSTOMIZATION.md) guide, which includes:
+
+- How to configure for different websites
+- Adding support for custom API patterns
+- Building for different browsers
+- Setting up for local development
+- Common customizations and troubleshooting
+
 ## Security Considerations
 
 This extension only forwards requests to a specific localhost port (11434) where Ollama runs. It does not access any other local resources or send data to third-party servers. All data remains on your local machine.
