@@ -1,0 +1,32 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Build files
+dist/
+build/
+*.zip
+
+# IDE/Editor specific files
+.vscode/
+.idea/
+*.sublime-*
+.DS_Store
+Thumbs.db
+
+# Extension packaging
+*.crx
+*.pem
+*.zip
+
+# Temporary files
+*.tmp
+*.bak
+temp/
+
+# Logs
+logs/
+*.log 

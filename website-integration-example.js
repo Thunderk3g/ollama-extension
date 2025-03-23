@@ -1,182 +1,212 @@
 /**
  * Ollama Bridge Extension - Website Integration Example
  * 
- * This file demonstrates how to integrate with the Ollama Bridge extension
- * from your website. Copy the relevant parts to your portfolio site.
+ * This file demonstrates how to integrate your website with the Ollama Bridge extension
+ * to connect with a local Ollama instance from an HTTPS website.
  */
 
-// Check if the Ollama Bridge extension is installed
-function checkOllamaBridgeExtension() {
-  // First, check if the extension object is available
+// =====================================================================
+// 1. Detect if the Ollama Bridge extension is installed
+// =====================================================================
+
+// Method 1: Listen for the initialization event
+document.addEventListener('ollama-bridge-initialized', () => {
+  console.log('Ollama Bridge extension detected and initialized!');
+  
+  // You can now make Ollama API calls safely
+  enableOllamaFeatures();
+});
+
+// Method 2: Check if the OllamaBridge object exists
+function checkOllamaBridgeAvailability() {
   if (window.OllamaBridge && window.OllamaBridge.isAvailable) {
-    console.log('Ollama Bridge extension is detected!');
+    console.log('Ollama Bridge extension detected!');
+    enableOllamaFeatures();
     return true;
-  } else {
-    console.log('Ollama Bridge extension is not installed.');
-    return false;
   }
+  return false;
 }
 
-// Get the current status of the Ollama Bridge extension
-async function getOllamaBridgeStatus() {
-  if (!window.OllamaBridge) return null;
+// Check immediately (might be too early)
+const isAvailableNow = checkOllamaBridgeAvailability();
+
+// If not available immediately, check again after a short delay
+if (!isAvailableNow) {
+  setTimeout(checkOllamaBridgeAvailability, 1000);
   
-  try {
-    const status = await window.OllamaBridge.getStatus();
-    console.log('Ollama Bridge status:', status);
-    return status;
-  } catch (error) {
-    console.error('Error getting Ollama Bridge status:', error);
-    return null;
-  }
-}
-
-// Listen for extension status changes
-function setupStatusChangeListener() {
-  document.addEventListener('ollama-bridge-settings-changed', (event) => {
-    console.log('Ollama Bridge settings changed:', event.detail);
-    
-    // You might want to update UI elements based on the new status
-    updateUI(event.detail);
-  });
-}
-
-// Example function to update UI based on extension status
-function updateUI(status) {
-  const statusElement = document.getElementById('ollama-status');
-  if (!statusElement) return;
-  
-  if (status.isEnabled) {
-    statusElement.textContent = 'Connected to Ollama';
-    statusElement.className = 'status-connected';
-  } else {
-    statusElement.textContent = 'Ollama Bridge is disabled';
-    statusElement.className = 'status-disconnected';
-  }
-}
-
-// Example function to make a request to the Ollama API
-async function fetchOllamaModels() {
-  try {
-    // This will be intercepted by the extension if installed
-    const response = await fetch('http://localhost:11434/api/tags');
-    
-    if (!response.ok) {
-      throw new Error(`Error: ${response.status}`);
+  // Final check after longer delay
+  setTimeout(() => {
+    if (!checkOllamaBridgeAvailability()) {
+      console.log('Ollama Bridge extension not detected. Some features will be disabled.');
+      showExtensionInstallPrompt();
     }
-    
-    const data = await response.json();
-    console.log('Available Ollama models:', data);
-    return data;
-  } catch (error) {
-    console.error('Failed to fetch Ollama models:', error);
-    return null;
-  }
+  }, 3000);
 }
 
-// Example function to generate a completion with Ollama
-async function generateWithOllama(model, prompt) {
+// =====================================================================
+// 2. Making API calls to Ollama
+// =====================================================================
+
+// Example: Make a chat completion request
+async function generateChatResponse(prompt, model = 'llama2') {
   try {
-    // This will be intercepted by the extension if installed
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const response = await fetch('/api/chat', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         model: model,
-        prompt: prompt
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+        stream: false
       })
     });
     
-    if (!response.ok) {
-      throw new Error(`Error: ${response.status}`);
-    }
-    
     const data = await response.json();
-    console.log('Ollama response:', data);
     return data;
   } catch (error) {
-    console.error('Failed to generate with Ollama:', error);
-    return null;
+    console.error('Error calling Ollama:', error);
+    return { error: error.message };
   }
 }
 
-// Initialize when the page loads
-document.addEventListener('DOMContentLoaded', async () => {
-  // Check if extension is installed
-  const isExtensionInstalled = checkOllamaBridgeExtension();
-  
-  // Update UI based on extension availability
-  const extensionStatusElement = document.getElementById('extension-status');
-  if (extensionStatusElement) {
-    extensionStatusElement.textContent = isExtensionInstalled 
-      ? 'Ollama Bridge extension is installed'
-      : 'Ollama Bridge extension is not installed';
-    extensionStatusElement.className = isExtensionInstalled
-      ? 'status-available'
-      : 'status-unavailable';
+// Example: List available models
+async function listOllamaModels() {
+  try {
+    const response = await fetch('/api/tags');
+    const data = await response.json();
+    return data.models || [];
+  } catch (error) {
+    console.error('Error listing Ollama models:', error);
+    return [];
   }
+}
+
+// =====================================================================
+// 3. UI Integration
+// =====================================================================
+
+// Enable Ollama-dependent features in your UI
+function enableOllamaFeatures() {
+  // Show Ollama-related UI elements
+  document.querySelectorAll('.ollama-feature').forEach(el => {
+    el.style.display = 'block';
+  });
   
-  // Get current status if extension is available
-  if (isExtensionInstalled) {
-    const status = await getOllamaBridgeStatus();
-    if (status) {
-      updateUI(status);
+  // Populate model dropdown
+  listOllamaModels().then(models => {
+    const modelSelect = document.getElementById('model-select');
+    if (modelSelect) {
+      modelSelect.innerHTML = '';
+      models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        option.textContent = `${model.name} (${Math.round(model.size / 1024 / 1024 / 1024)}GB)`;
+        modelSelect.appendChild(option);
+      });
     }
-    
-    // Set up listener for status changes
-    setupStatusChangeListener();
-    
-    // Example: Load available models
-    const models = await fetchOllamaModels();
-    if (models && models.models) {
-      // Update a select dropdown with available models
-      const modelSelect = document.getElementById('model-select');
-      if (modelSelect) {
-        modelSelect.innerHTML = '';
-        models.models.forEach(model => {
-          const option = document.createElement('option');
-          option.value = model.name;
-          option.textContent = model.name;
-          modelSelect.appendChild(option);
-        });
+  });
+  
+  // Add event listeners for AI interaction
+  const chatForm = document.getElementById('chat-form');
+  if (chatForm) {
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const promptInput = document.getElementById('prompt-input');
+      const responseDiv = document.getElementById('response-output');
+      const selectedModel = document.getElementById('model-select').value;
+      
+      if (promptInput && responseDiv) {
+        const prompt = promptInput.value.trim();
+        if (prompt) {
+          responseDiv.textContent = 'Generating response...';
+          const result = await generateChatResponse(prompt, selectedModel);
+          responseDiv.textContent = result.message?.content || 'No response received';
+        }
       }
-    }
+    });
+  }
+}
+
+// Show a prompt to install the extension
+function showExtensionInstallPrompt() {
+  const promptDiv = document.createElement('div');
+  promptDiv.className = 'extension-install-prompt';
+  promptDiv.innerHTML = `
+    <h3>Enable AI Features</h3>
+    <p>To use AI features with your local Ollama models, please install the Ollama Bridge extension:</p>
+    <ol>
+      <li>Download the <a href="https://github.com/Thunderk3g/ollama-extension" target="_blank">Ollama Bridge extension</a></li>
+      <li>Follow the installation instructions</li>
+      <li>Refresh this page</li>
+    </ol>
+    <button id="dismiss-prompt">Dismiss</button>
+  `;
+  
+  document.body.appendChild(promptDiv);
+  
+  document.getElementById('dismiss-prompt').addEventListener('click', () => {
+    promptDiv.remove();
+  });
+}
+
+// =====================================================================
+// 4. Advanced Features: Status Monitoring
+// =====================================================================
+
+// Listen for status changes
+document.addEventListener('ollama-bridge-settings-changed', (event) => {
+  const { isEnabled, ollamaUrl } = event.detail;
+  console.log('Ollama Bridge settings changed:', { isEnabled, ollamaUrl });
+  
+  if (isEnabled) {
+    enableOllamaFeatures();
+  } else {
+    disableOllamaFeatures();
   }
 });
 
-// Example: Hook up a form for generating text with Ollama
-const generateForm = document.getElementById('generate-form');
-if (generateForm) {
-  generateForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    
-    const modelSelect = document.getElementById('model-select');
-    const promptInput = document.getElementById('prompt-input');
-    const resultOutput = document.getElementById('result-output');
-    
-    if (!modelSelect || !promptInput || !resultOutput) return;
-    
-    const model = modelSelect.value;
-    const prompt = promptInput.value;
-    
-    if (!model || !prompt) {
-      alert('Please select a model and enter a prompt');
-      return;
-    }
-    
-    // Show loading state
-    resultOutput.textContent = 'Generating...';
-    
-    // Generate the response
-    const result = await generateWithOllama(model, prompt);
-    
-    // Update the UI with the result
-    if (result) {
-      resultOutput.textContent = result.response;
-    } else {
-      resultOutput.textContent = 'Error generating response. Is Ollama running?';
-    }
+// Get current status
+function checkConnectionStatus() {
+  if (window.OllamaBridge) {
+    window.OllamaBridge.getStatus()
+      .then(status => {
+        console.log('Ollama Bridge status:', status);
+        updateStatusIndicator(status.isEnabled);
+      })
+      .catch(error => {
+        console.error('Failed to get status:', error);
+        updateStatusIndicator(false);
+      });
+  }
+}
+
+// Update status indicator in the UI
+function updateStatusIndicator(isConnected) {
+  const indicator = document.getElementById('ollama-status-indicator');
+  if (indicator) {
+    indicator.className = isConnected ? 'status-connected' : 'status-disconnected';
+    indicator.title = isConnected ? 'Connected to Ollama' : 'Not connected to Ollama';
+  }
+}
+
+// Disable Ollama features when disconnected
+function disableOllamaFeatures() {
+  document.querySelectorAll('.ollama-feature').forEach(el => {
+    el.style.display = 'none';
   });
-} 
+  
+  const statusMessage = document.createElement('div');
+  statusMessage.className = 'ollama-disconnected-message';
+  statusMessage.textContent = 'Ollama connection is disabled. Enable it from the extension popup.';
+  document.body.appendChild(statusMessage);
+  
+  setTimeout(() => {
+    statusMessage.remove();
+  }, 5000);
+}
+
+// Check status when page loads
+setTimeout(checkConnectionStatus, 2000); 
