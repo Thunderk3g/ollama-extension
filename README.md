@@ -67,6 +67,57 @@ window.fetch = async function(resource, options = {}) {
 };
 ```
 
+### Streaming Response Standardization
+
+The extension provides standardized streaming support across multiple formats:
+
+```javascript
+// Client-side streaming interface
+const eventSource = OllamaBridge.getEventSource('/api/chat', {
+  model: 'llama3',
+  messages: [{ role: 'user', content: 'Tell me a story' }]
+}, { streamFormat: 'sse' });
+
+// Event-based handling
+eventSource.addEventListener('chunk', (event) => {
+  console.log('Received chunk:', event.detail);
+});
+
+eventSource.addEventListener('end', () => {
+  console.log('Stream completed');
+});
+```
+
+The extension supports three streaming formats:
+
+1. **Server-Sent Events (SSE)**: Ideal for frameworks with EventSource support
+2. **JSON Chunks**: Provides structured data for each response segment
+3. **Raw Text**: Delivers plain text content for simple integration
+
+Stream adapters transform Ollama's streaming format to match various client framework expectations:
+
+```javascript
+// Background.js stream adapter example
+function createSSEAdapter(chunkCallback, endpoint) {
+  return {
+    processChunk: (chunk) => {
+      // Apply transformation if available
+      let transformedChunk = 
+        template.streamResponseTransform[endpoint](chunk);
+      
+      // Format as SSE and return
+      chunkCallback(transformedChunk, false, null);
+    },
+    end: () => {
+      chunkCallback(null, true, null);
+    },
+    error: (error) => {
+      chunkCallback(null, false, error);
+    }
+  };
+}
+```
+
 ### API Endpoint Mapping
 
 The extension supports customized endpoint mapping to accommodate different API conventions:
@@ -169,24 +220,62 @@ let CUSTOM_ENDPOINTS = {
 
 ### 4. Customize Request/Response Transformation
 
-Modify the `handleOllamaRequest` function to transform data for your custom endpoints:
+Modify the transformation templates to handle your specific data format requirements:
 
 ```javascript
-if (endpoint === '/api/your-custom-endpoint') {
-  // Transform input data to match Ollama requirements
-  data = {
-    model: data.model || 'your-default-model',
-    messages: [
-      { 
-        role: 'system', 
-        content: 'Your custom system prompt'
-      },
-      { 
-        role: 'user', 
-        content: data.query || 'Default query'
-      }
-    ]
-  };
+// Add a custom template for your application
+'your-app-template': {
+  id: 'your-app-template',
+  name: 'Your App Template',
+  description: 'Custom format for your application',
+  framework: 'custom',
+  requestTransform: {
+    '/api/chat': (data) => {
+      // Transform input data
+      return {
+        model: data.model || 'your-default-model',
+        messages: data.messages || [
+          { role: 'system', content: 'Your default system prompt' },
+          { role: 'user', content: data.query || 'Default query' }
+        ]
+      };
+    }
+  },
+  responseTransform: {
+    '/api/chat': (response) => {
+      // Transform response data
+      return {
+        text: response.message.content,
+        metadata: {
+          model: response.model,
+          created: Date.now()
+        }
+      };
+    }
+  },
+  // Add streaming transformations for your template
+  streamRequestTransform: {
+    '/api/chat': (data) => {
+      // Transform streaming request
+      return {
+        model: data.model || 'your-default-model',
+        messages: data.messages || [
+          { role: 'system', content: 'Your default system prompt' },
+          { role: 'user', content: data.query || 'Default query' }
+        ],
+        stream: true
+      };
+    }
+  },
+  streamResponseTransform: {
+    '/api/chat': (chunk) => {
+      // Transform streaming response chunk
+      return {
+        text: chunk.message?.content || chunk.delta?.content || '',
+        done: false
+      };
+    }
+  }
 }
 ```
 
@@ -200,7 +289,7 @@ function isOllamaBridgeAvailable() {
   return typeof window !== 'undefined' && window.OllamaBridge && window.OllamaBridge.isAvailable;
 }
 
-// Using the bridge
+// Using the bridge for regular requests
 async function generateWithOllama(prompt) {
   if (isOllamaBridgeAvailable()) {
     try {
@@ -218,6 +307,56 @@ async function generateWithOllama(prompt) {
     } catch (error) {
       console.error('Error using Ollama:', error);
       return 'Error connecting to Ollama';
+    }
+  } else {
+    return 'Ollama Bridge extension not detected. Please install it to use local LLM features.';
+  }
+}
+
+// Using the bridge for streaming responses
+function streamFromOllama(prompt, elementId) {
+  if (isOllamaBridgeAvailable()) {
+    // Get the element to update
+    const outputElement = document.getElementById(elementId);
+    outputElement.textContent = '';
+    
+    try {
+      // Create a streaming request using ReadableStream
+      const stream = window.OllamaBridge.getStream('/api/chat', {
+        model: 'llama3',
+        messages: [{ role: 'user', content: prompt }]
+      }, { streamFormat: 'json' });
+      
+      // Set up a reader to process the stream
+      const reader = stream.getReader();
+      
+      function readChunk() {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            console.log('Stream complete');
+            return;
+          }
+          
+          // Process the value (JSON parsed from stream)
+          const chunk = JSON.parse(value);
+          const content = chunk.delta?.content || chunk.message?.content || '';
+          
+          // Append to the output element
+          outputElement.textContent += content;
+          
+          // Read the next chunk
+          readChunk();
+        }).catch(error => {
+          console.error('Error reading stream:', error);
+        });
+      }
+      
+      // Start reading
+      readChunk();
+      
+    } catch (error) {
+      console.error('Error setting up stream:', error);
+      outputElement.textContent = 'Error connecting to Ollama';
     }
   } else {
     return 'Ollama Bridge extension not detected. Please install it to use local LLM features.';
@@ -254,6 +393,8 @@ The extension implements several optimizations:
 2. **Method Caching**: Intelligently determines and caches HTTP methods to reduce processing time  
 3. **Shared Background Worker**: Uses a single service worker for all requests to reduce memory usage
 4. **Lightweight Communication**: Uses custom events for efficient message passing between components
+5. **Streaming Optimization**: Processes stream chunks efficiently with minimal overhead
+6. **Adaptive Buffer Size**: Configurable buffer size for text streaming to balance responsiveness and efficiency
 
 ## Security Implications
 
@@ -263,7 +404,8 @@ The extension maintains security through:
 2. **No External Calls**: Only communicates with the local Ollama server
 3. **Request Validation**: Validates all incoming requests before processing
 4. **Error Handling**: Provides detailed error messages without exposing system information
+5. **Secure Stream Handling**: Stream data is processed in a controlled environment
 
 ## Conclusion
 
-This extension provides a robust, secure bridge between web applications and locally-running Ollama LLM instances. By circumventing CORS restrictions through a properly designed extension architecture, it enables web developers to leverage powerful local language models without compromising on security or user experience. 
+This extension provides a robust, secure bridge between web applications and locally-running Ollama LLM instances. By circumventing CORS restrictions through a properly designed extension architecture, it enables web developers to leverage powerful local language models without compromising on security or user experience. The standardized streaming support further enhances this integration, allowing for responsive, real-time AI interactions in web applications. 
