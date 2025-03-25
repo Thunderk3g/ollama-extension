@@ -1,0 +1,365 @@
+// Default transformation templates
+const DEFAULT_TEMPLATES = {
+  'default': {
+    id: 'default',
+    name: 'Default',
+    description: 'Standard format for Ollama API',
+    framework: 'generic',
+    requestTransform: {
+      '/api/chat': (data) => {
+        // Ensure we have a model and messages
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [
+            { role: 'user', content: data.prompt || 'Hello' }
+          ],
+          options: data.options || {}
+        };
+      },
+      '/api/generate': (data) => {
+        // For generate API, ensure we have a prompt
+        return {
+          model: data.model || defaultModel,
+          prompt: data.prompt || (data.messages ? 
+            data.messages.map(m => `${m.role}: ${m.content}`).join('\n\n') : 
+            'Please respond.'),
+          options: data.options || {}
+        };
+      }
+    },
+    responseTransform: {
+      '/api/chat': (response) => response,
+      '/api/generate': (response) => {
+        // Convert generate response to chat format
+        if (response && response.response) {
+          return {
+            message: {
+              role: 'assistant',
+              content: response.response
+            }
+          };
+        }
+        return response;
+      }
+    },
+    // Streaming transformations
+    streamRequestTransform: {
+      '/api/chat': (data) => {
+        // Ensure we have a model, messages, and streaming enabled
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [
+            { role: 'user', content: data.prompt || 'Hello' }
+          ],
+          options: data.options || {},
+          stream: true
+        };
+      },
+      '/api/generate': (data) => {
+        // For generate API, ensure we have a prompt and streaming enabled
+        return {
+          model: data.model || defaultModel,
+          prompt: data.prompt || (data.messages ? 
+            data.messages.map(m => `${m.role}: ${m.content}`).join('\n\n') : 
+            'Please respond.'),
+          options: data.options || {},
+          stream: true
+        };
+      }
+    },
+    streamResponseTransform: {
+      '/api/chat': (chunk) => chunk,
+      '/api/generate': (chunk) => {
+        // Convert generate streaming chunk to chat-like format
+        if (chunk && chunk.response) {
+          return {
+            delta: {
+              role: 'assistant',
+              content: chunk.response
+            }
+          };
+        }
+        return chunk;
+      }
+    }
+  },
+  'nextjs-langchain': {
+    id: 'nextjs-langchain',
+    name: 'Next.js + LangChain',
+    description: 'Format for Next.js apps using LangChain.js',
+    framework: 'nextjs',
+    requestTransform: {
+      '/api/chat': (data) => {
+        // Ensure we have a model and messages
+        let messages = data.messages || [];
+        if (data.prompt && messages.length === 0) {
+          messages = [{ role: 'user', content: data.prompt }];
+        }
+        
+        // Add system message if provided but not present
+        if (data.systemPrompt && !messages.some(m => m.role === 'system')) {
+          messages.unshift({ role: 'system', content: data.systemPrompt });
+        }
+        
+        return {
+          model: data.model || defaultModel,
+          messages: messages,
+          options: {
+            temperature: data.temperature || 0.7,
+            top_p: data.top_p || 0.9,
+            top_k: data.top_k || 40,
+            ...data.options
+          }
+        };
+      }
+    },
+    responseTransform: {
+      '/api/chat': (response) => {
+        // Structure response for LangChain expectations
+        if (response && response.message) {
+          return {
+            output: response.message.content,
+            messageId: Date.now().toString(),
+            conversationId: Date.now().toString()
+          };
+        }
+        return response;
+      }
+    },
+    // Streaming transformations for LangChain
+    streamRequestTransform: {
+      '/api/chat': (data) => {
+        // Ensure we have a model, messages, and streaming enabled
+        let messages = data.messages || [];
+        if (data.prompt && messages.length === 0) {
+          messages = [{ role: 'user', content: data.prompt }];
+        }
+        
+        // Add system message if provided but not present
+        if (data.systemPrompt && !messages.some(m => m.role === 'system')) {
+          messages.unshift({ role: 'system', content: data.systemPrompt });
+        }
+        
+        return {
+          model: data.model || defaultModel,
+          messages: messages,
+          options: {
+            temperature: data.temperature || 0.7,
+            top_p: data.top_p || 0.9,
+            top_k: data.top_k || 40,
+            ...data.options
+          },
+          stream: true
+        };
+      }
+    },
+    streamResponseTransform: {
+      '/api/chat': (chunk) => {
+        // Transform for LangChain streaming format
+        if (chunk && chunk.message && chunk.message.content) {
+          return {
+            token: {
+              text: chunk.message.content
+            },
+            messageId: `msg_${Date.now()}`,
+            conversationId: `conv_${Date.now()}`
+          };
+        } else if (chunk && chunk.delta && chunk.delta.content) {
+          return {
+            token: {
+              text: chunk.delta.content
+            },
+            messageId: `msg_${Date.now()}`,
+            conversationId: `conv_${Date.now()}`
+          };
+        }
+        return chunk;
+      }
+    }
+  },
+  'react-openai-api': {
+    id: 'react-openai-api',
+    name: 'React OpenAI API Format',
+    description: 'Compatible with OpenAI API clients',
+    framework: 'react',
+    requestTransform: {
+      '/api/chat': (data) => {
+        // Convert from OpenAI format
+        let options = {};
+        if (data.temperature) options.temperature = data.temperature;
+        if (data.top_p) options.top_p = data.top_p;
+        if (data.max_tokens) options.num_predict = data.max_tokens;
+        
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [],
+          options
+        };
+      }
+    },
+    responseTransform: {
+      '/api/chat': (response) => {
+        // Convert to OpenAI-like format
+        if (response && response.message) {
+          return {
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: defaultModel,
+            choices: [
+              {
+                index: 0,
+                message: response.message,
+                finish_reason: 'stop'
+              }
+            ],
+            usage: {
+              prompt_tokens: -1,
+              completion_tokens: -1,
+              total_tokens: -1
+            }
+          };
+        }
+        return response;
+      }
+    },
+    // Streaming transformations for OpenAI format
+    streamRequestTransform: {
+      '/api/chat': (data) => {
+        // Convert from OpenAI format with streaming enabled
+        let options = {};
+        if (data.temperature) options.temperature = data.temperature;
+        if (data.top_p) options.top_p = data.top_p;
+        if (data.max_tokens) options.num_predict = data.max_tokens;
+        
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [],
+          options,
+          stream: true
+        };
+      }
+    },
+    streamResponseTransform: {
+      '/api/chat': (chunk) => {
+        // Convert to OpenAI streaming format
+        const now = Date.now();
+        let content = '';
+        
+        if (chunk.message && chunk.message.content) {
+          content = chunk.message.content;
+        } else if (chunk.delta && chunk.delta.content) {
+          content = chunk.delta.content;
+        }
+        
+        return {
+          id: `chatcmpl-${now}`,
+          object: 'chat.completion.chunk',
+          created: Math.floor(now / 1000),
+          model: defaultModel,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                content: content
+              },
+              finish_reason: null
+            }
+          ]
+        };
+      }
+    }
+  },
+  'sse-compatible': {
+    id: 'sse-compatible',
+    name: 'Server-Sent Events Compatible',
+    description: 'Format optimized for standard SSE clients',
+    framework: 'sse',
+    requestTransform: {
+      '/api/chat': (data) => {
+        // Standard request transform for chat
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [
+            { role: 'user', content: data.prompt || 'Hello' }
+          ],
+          options: data.options || {}
+        };
+      },
+      '/api/generate': (data) => {
+        // Standard request transform for generate
+        return {
+          model: data.model || defaultModel,
+          prompt: data.prompt || (data.messages ? 
+            data.messages.map(m => `${m.role}: ${m.content}`).join('\n\n') : 
+            'Please respond.'),
+          options: data.options || {}
+        };
+      }
+    },
+    responseTransform: {
+      '/api/chat': (response) => response,
+      '/api/generate': (response) => {
+        // Standard response transform
+        if (response && response.response) {
+          return {
+            message: {
+              role: 'assistant',
+              content: response.response
+            }
+          };
+        }
+        return response;
+      }
+    },
+    // Streaming optimized for SSE
+    streamRequestTransform: {
+      '/api/chat': (data) => {
+        // Add streaming flag to chat request
+        return {
+          model: data.model || defaultModel,
+          messages: data.messages || [
+            { role: 'user', content: data.prompt || 'Hello' }
+          ],
+          options: data.options || {},
+          stream: true
+        };
+      },
+      '/api/generate': (data) => {
+        // Add streaming flag to generate request
+        return {
+          model: data.model || defaultModel,
+          prompt: data.prompt || (data.messages ? 
+            data.messages.map(m => `${m.role}: ${m.content}`).join('\n\n') : 
+            'Please respond.'),
+          options: data.options || {},
+          stream: true
+        };
+      }
+    },
+    streamResponseTransform: {
+      '/api/chat': (chunk) => {
+        // Simple format optimized for SSE
+        let content = '';
+        
+        if (chunk.message && chunk.message.content) {
+          content = chunk.message.content;
+        } else if (chunk.delta && chunk.delta.content) {
+          content = chunk.delta.content;
+        }
+        
+        return {
+          text: content,
+          done: false
+        };
+      },
+      '/api/generate': (chunk) => {
+        // Simple format for generate streaming
+        return {
+          text: chunk.response || '',
+          done: false
+        };
+      }
+    }
+  }
+}; 
