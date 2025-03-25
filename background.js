@@ -159,6 +159,25 @@ const DEFAULT_TEMPLATES = {
   }
 };
 
+// Add to initialization section
+let streamingConfig = {
+  streamingEnabled: true,
+  streamFormat: 'sse',
+  streamChunkSize: 20,
+  streamTemplate: 'default'
+};
+
+// Load streaming config
+chrome.storage.local.get({
+  streamingEnabled: true,
+  streamFormat: 'sse',
+  streamChunkSize: 20,
+  streamTemplate: 'default'
+}, function(config) {
+  streamingConfig = config;
+  console.log('Loaded streaming configuration:', streamingConfig);
+});
+
 // Initialize extension state
 chrome.runtime.onInstalled.addListener(async () => {
   // Initialize with default settings
@@ -278,6 +297,46 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       });
     return true; // Indicates async response
+  } else if (request.type === 'OLLAMA_STREAMING_REQUEST') {
+    // Handle streaming API request
+    // We can't use sendResponse for streaming, so we'll communicate
+    // through port messaging instead
+    const port = chrome.runtime.connect({ name: 'ollama-stream' });
+    
+    handleOllamaStreamingRequest(
+      request.endpoint, 
+      request.method, 
+      request.data, 
+      request.streamFormat || 'sse',
+      (chunk, done, error) => {
+        if (error) {
+          port.postMessage({ 
+            type: 'stream-error', 
+            error: error.message || 'Unknown error' 
+          });
+          port.disconnect();
+        } else if (done) {
+          port.postMessage({ type: 'stream-end' });
+          port.disconnect();
+        } else {
+          port.postMessage({ 
+            type: 'stream-chunk', 
+            data: chunk 
+          });
+        }
+      }
+    ).catch(error => {
+      // Handle any setup errors
+      const port = chrome.runtime.connect({ name: 'ollama-stream' });
+      port.postMessage({ 
+        type: 'stream-error', 
+        error: error.message || 'Unknown error' 
+      });
+      port.disconnect();
+    });
+    
+    // No sendResponse needed, we're using the port
+    return true;
   } else if (request.type === 'UPDATE_SETTINGS') {
     // Update extension settings
     if (request.ollamaUrl) {
@@ -368,6 +427,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         console.error('Ollama Bridge: Template management failed', error);
         sendResponse({ success: false, error: error.message });
       });
+    return true;
+  } else if (request.action === 'updateStreamingConfig') {
+    streamingConfig = request.config;
+    console.log('Updated streaming configuration:', streamingConfig);
+    sendResponse({ success: true });
     return true;
   }
 });
@@ -886,4 +950,230 @@ function applyModelPresets(data, endpoint, settings) {
   }
   
   return transformedData;
+}
+
+// Function to handle Ollama streaming API requests
+async function handleOllamaStreamingRequest(endpoint, method, data, streamFormat = 'sse', chunkCallback) {
+  console.log('Handling Ollama streaming request:', { endpoint, method, data, streamFormat });
+
+  // Get settings
+  const settings = await chrome.storage.local.get([
+    'ollamaUrl', 
+    'isEnabled', 
+    'customEndpointMappings',
+    'defaultModel',
+    'modelPresets',
+    'transformationTemplates'
+  ]);
+  
+  // Check if streaming is enabled
+  if (!streamingConfig.streamingEnabled) {
+    chunkCallback(null, true, new Error('Streaming is disabled in extension settings'));
+    return;
+  }
+
+  // Handle custom endpoint mappings
+  let ollamaEndpoint = '/api/chat'; // Default endpoint
+  let requestData = data || {};
+  
+  if (customEndpointMappings && endpoint) {
+    const mapping = customEndpointMappings.find(m => m.sourceEndpoint === endpoint);
+    if (mapping) {
+      ollamaEndpoint = mapping.targetEndpoint;
+      console.log(`Mapped ${endpoint} to ${ollamaEndpoint}`);
+      
+      // Apply transformation if enabled
+      if (mapping.transformRequest) {
+        const template = getTemplateById(mapping.template || streamingConfig.streamTemplate);
+        if (template && template.streamRequestTransform && template.streamRequestTransform[ollamaEndpoint]) {
+          try {
+            requestData = template.streamRequestTransform[ollamaEndpoint](requestData);
+            console.log('Transformed request data:', requestData);
+          } catch (error) {
+            console.error('Error transforming request:', error);
+          }
+        }
+      }
+    }
+  }
+  
+  // Ensure streaming is enabled in the request
+  if (!requestData.stream) {
+    requestData.stream = true;
+  }
+  
+  // Make request to Ollama
+  fetch(`${settings.ollamaUrl}${ollamaEndpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(requestData)
+  })
+  .then(async response => {
+    if (!response.ok) {
+      throw new Error(`HTTP error ${response.status}`);
+    }
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const chunkSize = streamingConfig.streamChunkSize;
+    
+    // Get appropriate stream format adapter based on configuration
+    let streamAdapter;
+    
+    switch(streamFormat) {
+      case 'sse':
+        streamAdapter = createSSEAdapter(chunkCallback, ollamaEndpoint);
+        break;
+      case 'json':
+        streamAdapter = createJSONAdapter(chunkCallback, ollamaEndpoint);
+        break;
+      case 'text':
+        streamAdapter = createTextAdapter(chunkCallback, ollamaEndpoint);
+        break;
+      default:
+        streamAdapter = createSSEAdapter(chunkCallback, ollamaEndpoint);
+    }
+    
+    // Process stream
+    function processStream() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          if (buffer.length > 0) {
+            streamAdapter.processChunk(buffer);
+          }
+          streamAdapter.end();
+          return;
+        }
+        
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        
+        // Process complete JSON objects from the buffer
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          
+          if (line.trim() === '') continue;
+          
+          try {
+            const jsonChunk = JSON.parse(line);
+            streamAdapter.processChunk(jsonChunk);
+          } catch (e) {
+            console.error('Error parsing JSON from stream:', e, 'Line:', line);
+          }
+        }
+        
+        processStream();
+      }).catch(error => {
+        streamAdapter.error(error);
+      });
+    }
+    
+    processStream();
+  })
+  .catch(error => {
+    console.error('Error in streaming request:', error);
+    chunkCallback(null, false, error);
+  });
+}
+
+// Stream format adapters
+function createSSEAdapter(chunkCallback, endpoint) {
+  const template = getTemplateById(streamingConfig.streamTemplate);
+  return {
+    processChunk: (chunk) => {
+      // Apply transformation if available
+      let transformedChunk = chunk;
+      if (template && template.streamResponseTransform && template.streamResponseTransform[endpoint]) {
+        try {
+          transformedChunk = template.streamResponseTransform[endpoint](chunk);
+        } catch (error) {
+          console.error('Error transforming streaming response:', error);
+        }
+      }
+      
+      chunkCallback(transformedChunk, false, null);
+    },
+    end: () => {
+      chunkCallback(null, true, null);
+    },
+    error: (error) => {
+      chunkCallback(null, false, error);
+    }
+  };
+}
+
+function createJSONAdapter(chunkCallback, endpoint) {
+  const template = getTemplateById(streamingConfig.streamTemplate);
+  return {
+    processChunk: (chunk) => {
+      // Apply transformation if available
+      let transformedChunk = chunk;
+      if (template && template.streamResponseTransform && template.streamResponseTransform[endpoint]) {
+        try {
+          transformedChunk = template.streamResponseTransform[endpoint](chunk);
+        } catch (error) {
+          console.error('Error transforming streaming response:', error);
+        }
+      }
+      
+      chunkCallback(transformedChunk, false, null);
+    },
+    end: () => {
+      chunkCallback(null, true, null);
+    },
+    error: (error) => {
+      chunkCallback(null, false, error);
+    }
+  };
+}
+
+function createTextAdapter(chunkCallback, endpoint) {
+  const template = getTemplateById(streamingConfig.streamTemplate);
+  let textBuffer = '';
+  
+  return {
+    processChunk: (chunk) => {
+      // Extract text content from the chunk
+      let content = '';
+      if (chunk.response) {
+        content = chunk.response;
+      } else if (chunk.message && chunk.message.content) {
+        content = chunk.message.content;
+      } else if (chunk.delta && chunk.delta.content) {
+        content = chunk.delta.content;
+      }
+      
+      textBuffer += content;
+      
+      // Send when buffer reaches configured chunk size
+      if (textBuffer.length >= streamingConfig.streamChunkSize) {
+        chunkCallback(textBuffer, false, null);
+        textBuffer = '';
+      }
+    },
+    end: () => {
+      // Send any remaining text in buffer
+      if (textBuffer.length > 0) {
+        chunkCallback(textBuffer, false, null);
+      }
+      
+      chunkCallback(null, true, null);
+    },
+    error: (error) => {
+      chunkCallback(null, false, error);
+    }
+  };
+}
+
+// Helper function to get template by ID
+function getTemplateById(templateId) {
+  if (DEFAULT_TEMPLATES[templateId]) {
+    return DEFAULT_TEMPLATES[templateId];
+  }
+  return DEFAULT_TEMPLATES['default'];
 } 

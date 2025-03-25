@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
   testOllamaConnection();
   setupTabHandlers();
   setupModelParameterHandlers();
+  initStreamingTab();
 });
 
 // Setup tab switching
@@ -703,5 +704,75 @@ function setDefaultModel(modelName) {
     } else {
       alert(`Error setting default model: ${response?.error || 'Unknown error'}`);
     }
+  });
+}
+
+// Streaming Configuration Tab
+function initStreamingTab() {
+  const enableStreamingCheckbox = document.getElementById('enable-streaming');
+  const streamFormatSelect = document.getElementById('stream-format-select');
+  const streamChunkSizeInput = document.getElementById('stream-chunk-size');
+  const streamTemplateSelect = document.getElementById('stream-template-select');
+  const saveStreamingConfigButton = document.getElementById('save-streaming-config');
+  const resetStreamingConfigButton = document.getElementById('reset-streaming-config');
+
+  // Load current streaming settings
+  chrome.storage.local.get({
+    streamingEnabled: true,
+    streamFormat: 'sse',
+    streamChunkSize: 20,
+    streamTemplate: 'default'
+  }, function(config) {
+    enableStreamingCheckbox.checked = config.streamingEnabled;
+    streamFormatSelect.value = config.streamFormat;
+    streamChunkSizeInput.value = config.streamChunkSize;
+    streamTemplateSelect.value = config.streamTemplate;
+  });
+
+  // Save streaming configuration
+  saveStreamingConfigButton.addEventListener('click', function() {
+    const config = {
+      streamingEnabled: enableStreamingCheckbox.checked,
+      streamFormat: streamFormatSelect.value,
+      streamChunkSize: parseInt(streamChunkSizeInput.value, 10) || 20,
+      streamTemplate: streamTemplateSelect.value
+    };
+
+    chrome.storage.local.set(config, function() {
+      showToast('Streaming configuration saved');
+      
+      // Broadcast the settings update to the background script
+      chrome.runtime.sendMessage({
+        action: 'updateStreamingConfig',
+        config: config
+      });
+    });
+  });
+
+  // Reset to defaults
+  resetStreamingConfigButton.addEventListener('click', function() {
+    const defaultConfig = {
+      streamingEnabled: true,
+      streamFormat: 'sse',
+      streamChunkSize: 20,
+      streamTemplate: 'default'
+    };
+
+    // Update the UI
+    enableStreamingCheckbox.checked = defaultConfig.streamingEnabled;
+    streamFormatSelect.value = defaultConfig.streamFormat;
+    streamChunkSizeInput.value = defaultConfig.streamChunkSize;
+    streamTemplateSelect.value = defaultConfig.streamTemplate;
+
+    // Save to storage
+    chrome.storage.local.set(defaultConfig, function() {
+      showToast('Streaming configuration reset to defaults');
+      
+      // Broadcast the settings update
+      chrome.runtime.sendMessage({
+        action: 'updateStreamingConfig',
+        config: defaultConfig
+      });
+    });
   });
 } 

@@ -254,3 +254,293 @@ const getManifest = runtime ? () => runtime.getManifest() : () => ({ version: '1
   document.dispatchEvent(new CustomEvent('ollama-bridge-initialized'));
   console.log('Ollama Bridge initialized');
 })(); 
+
+// Unique request ID counter
+let requestCounter = 0;
+
+// Map to store resolve/reject functions for requests
+const pendingRequests = new Map();
+
+// Map to store stream controllers and event targets
+const activeStreams = new Map();
+
+// Listen for messages from the content script
+window.addEventListener('message', function(event) {
+  // Check if the message is from our extension
+  if (event.data.type === 'OLLAMA_API_RESPONSE') {
+    // Look up the corresponding request
+    const requestId = event.data.requestId;
+    const pendingRequest = pendingRequests.get(requestId);
+    
+    if (pendingRequest) {
+      // Remove from pending requests
+      pendingRequests.delete(requestId);
+      
+      // Resolve or reject the promise
+      if (event.data.success) {
+        pendingRequest.resolve(event.data.data);
+      } else {
+        pendingRequest.reject(new Error(event.data.error || 'Unknown error'));
+      }
+    }
+  } else if (event.data.type === 'OLLAMA_STREAM_CHUNK') {
+    // Handle streaming chunk
+    const requestId = event.data.requestId;
+    const streamController = activeStreams.get(requestId);
+    
+    if (streamController) {
+      // Process the chunk based on stream type
+      if (streamController.type === 'callback') {
+        // For callback-based streams
+        streamController.callback(event.data.data, false, null);
+      } else if (streamController.type === 'readable-stream') {
+        // For ReadableStream
+        streamController.controller.enqueue(event.data.data);
+      } else if (streamController.type === 'event-target') {
+        // For EventTarget
+        const chunkEvent = new CustomEvent('chunk', { detail: event.data.data });
+        streamController.target.dispatchEvent(chunkEvent);
+      }
+    }
+  } else if (event.data.type === 'OLLAMA_STREAM_END') {
+    // Handle stream completion
+    const requestId = event.data.requestId;
+    const streamController = activeStreams.get(requestId);
+    
+    if (streamController) {
+      // Process stream end based on stream type
+      if (streamController.type === 'callback') {
+        // Signal completion to callback
+        streamController.callback(null, true, null);
+      } else if (streamController.type === 'readable-stream') {
+        // Close the stream
+        streamController.controller.close();
+      } else if (streamController.type === 'event-target') {
+        // Dispatch end event
+        const endEvent = new CustomEvent('end');
+        streamController.target.dispatchEvent(endEvent);
+      }
+      
+      // Remove from active streams
+      activeStreams.delete(requestId);
+    }
+  } else if (event.data.type === 'OLLAMA_STREAM_ERROR') {
+    // Handle stream error
+    const requestId = event.data.requestId;
+    const streamController = activeStreams.get(requestId);
+    
+    if (streamController) {
+      // Process stream error based on stream type
+      const error = new Error(event.data.error || 'Unknown streaming error');
+      
+      if (streamController.type === 'callback') {
+        // Signal error to callback
+        streamController.callback(null, false, error);
+      } else if (streamController.type === 'readable-stream') {
+        // Error the stream
+        streamController.controller.error(error);
+      } else if (streamController.type === 'event-target') {
+        // Dispatch error event
+        const errorEvent = new CustomEvent('error', { detail: error });
+        streamController.target.dispatchEvent(errorEvent);
+      }
+      
+      // Remove from active streams
+      activeStreams.delete(requestId);
+    }
+  }
+});
+
+// Create the Ollama API client
+window.OllamaBridge = {
+  /**
+   * Send a request to the Ollama API
+   * @param {string} endpoint - The API endpoint (e.g., "/api/chat")
+   * @param {Object} data - The request data
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} - Promise resolving to the API response
+   */
+  request: function(endpoint, data = {}, options = {}) {
+    return new Promise((resolve, reject) => {
+      // Generate a unique request ID
+      const requestId = `req_${++requestCounter}`;
+      
+      // Store the resolve/reject functions
+      pendingRequests.set(requestId, { resolve, reject });
+      
+      // Determine HTTP method, defaulting based on endpoint type
+      const getEndpoints = ['/api/tags', '/api/ps', '/api/version'];
+      const defaultMethod = getEndpoints.includes(endpoint) ? 'GET' : 'POST';
+      const method = options.method || defaultMethod;
+      
+      // Send the request to the content script
+      window.postMessage({
+        type: 'OLLAMA_API_REQUEST',
+        requestId: requestId,
+        endpoint: endpoint,
+        method: method,
+        data: data
+      }, '*');
+    });
+  },
+  
+  /**
+   * Send a streaming request to the Ollama API using a callback
+   * @param {string} endpoint - The API endpoint (e.g., "/api/chat")
+   * @param {Object} data - The request data
+   * @param {Function} callback - Callback function(chunk, done, error)
+   * @param {Object} options - Additional options including streamFormat
+   * @returns {Object} - Controller with an abort method
+   */
+  requestStream: function(endpoint, data = {}, callback, options = {}) {
+    // Generate a unique request ID
+    const requestId = `stream_${++requestCounter}`;
+    
+    // Create stream controller
+    const controller = {
+      type: 'callback',
+      callback: callback,
+      abort: function() {
+        // Remove from active streams
+        activeStreams.delete(requestId);
+      }
+    };
+    
+    // Store the controller
+    activeStreams.set(requestId, controller);
+    
+    // Send the streaming request to the content script
+    window.postMessage({
+      type: 'OLLAMA_STREAMING_REQUEST',
+      requestId: requestId,
+      endpoint: endpoint,
+      method: 'POST', // Streaming only works with POST
+      data: data,
+      streamFormat: options.streamFormat || 'sse'
+    }, '*');
+    
+    return controller;
+  },
+  
+  /**
+   * Send a streaming request to the Ollama API using ReadableStream
+   * @param {string} endpoint - The API endpoint (e.g., "/api/chat")
+   * @param {Object} data - The request data
+   * @param {Object} options - Additional options including streamFormat
+   * @returns {ReadableStream} - Stream of response chunks
+   */
+  getStream: function(endpoint, data = {}, options = {}) {
+    // Generate a unique request ID
+    const requestId = `stream_${++requestCounter}`;
+    
+    // Create a ReadableStream
+    return new ReadableStream({
+      start: (controller) => {
+        // Create stream controller
+        const streamController = {
+          type: 'readable-stream',
+          controller: controller,
+          abort: function() {
+            // Remove from active streams
+            activeStreams.delete(requestId);
+          }
+        };
+        
+        // Store the controller
+        activeStreams.set(requestId, streamController);
+        
+        // Send the streaming request to the content script
+        window.postMessage({
+          type: 'OLLAMA_STREAMING_REQUEST',
+          requestId: requestId,
+          endpoint: endpoint,
+          method: 'POST', // Streaming only works with POST
+          data: data,
+          streamFormat: options.streamFormat || 'json'
+        }, '*');
+      },
+      cancel: () => {
+        // Remove from active streams when consumer cancels
+        activeStreams.delete(requestId);
+      }
+    });
+  },
+  
+  /**
+   * Send a streaming request to the Ollama API using EventTarget
+   * @param {string} endpoint - The API endpoint (e.g., "/api/chat")
+   * @param {Object} data - The request data
+   * @param {Object} options - Additional options including streamFormat
+   * @returns {EventTarget} - Event target with stream events
+   */
+  getEventSource: function(endpoint, data = {}, options = {}) {
+    // Generate a unique request ID
+    const requestId = `stream_${++requestCounter}`;
+    
+    // Create an EventTarget
+    const eventTarget = new EventTarget();
+    
+    // Create stream controller
+    const streamController = {
+      type: 'event-target',
+      target: eventTarget,
+      abort: function() {
+        // Remove from active streams
+        activeStreams.delete(requestId);
+        // Dispatch abort event
+        const abortEvent = new Event('abort');
+        eventTarget.dispatchEvent(abortEvent);
+      }
+    };
+    
+    // Store the controller
+    activeStreams.set(requestId, streamController);
+    
+    // Send the streaming request to the content script
+    window.postMessage({
+      type: 'OLLAMA_STREAMING_REQUEST',
+      requestId: requestId,
+      endpoint: endpoint,
+      method: 'POST', // Streaming only works with POST
+      data: data,
+      streamFormat: options.streamFormat || 'sse'
+    }, '*');
+    
+    // Add abort method to the event target
+    eventTarget.abort = streamController.abort;
+    
+    return eventTarget;
+  },
+  
+  // Utility functions for common API endpoints
+  chat: function(params, options = {}) {
+    return this.request('/api/chat', params, options);
+  },
+  
+  chatStream: function(params, callback, options = {}) {
+    return this.requestStream('/api/chat', params, callback, options);
+  },
+  
+  generate: function(params, options = {}) {
+    return this.request('/api/generate', params, options);
+  },
+  
+  generateStream: function(params, callback, options = {}) {
+    return this.requestStream('/api/generate', params, callback, options);
+  },
+  
+  embeddings: function(params, options = {}) {
+    return this.request('/api/embeddings', params, options);
+  },
+  
+  getTags: function(options = {}) {
+    return this.request('/api/tags', {}, { method: 'GET', ...options });
+  },
+  
+  getVersion: function(options = {}) {
+    return this.request('/api/version', {}, { method: 'GET', ...options });
+  }
+};
+
+// Let the page know the bridge is ready
+window.dispatchEvent(new CustomEvent('ollama-bridge-ready')); 

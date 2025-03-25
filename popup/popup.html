@@ -23,6 +23,7 @@
         <button class="tab-btn active" data-tab="connection">Connection</button>
         <button class="tab-btn" data-tab="endpoints">Endpoints</button>
         <button class="tab-btn" data-tab="models">Models</button>
+        <button class="tab-btn" data-tab="streaming">Streaming</button>
       </div>
       
       <div class="tab-content active" id="connection-tab">
@@ -189,6 +190,54 @@
               <button id="save-model-params" class="btn primary">Save Parameters</button>
               <button id="reset-model-params" class="btn secondary">Reset</button>
             </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="tab-content" id="streaming-tab">
+        <div class="streaming-container">
+          <h2>Streaming Configuration</h2>
+          <p class="subtext">Configure streaming response behavior for Ollama API</p>
+          
+          <div class="form-row checkbox-row">
+            <input type="checkbox" id="enable-streaming" checked>
+            <label for="enable-streaming">Enable Streaming Responses</label>
+          </div>
+          
+          <div class="streaming-format-section">
+            <h3>Default Stream Format</h3>
+            <p class="subtext">Select the preferred format for streaming responses</p>
+            
+            <div class="form-row">
+              <select id="stream-format-select">
+                <option value="sse">Server-Sent Events (SSE)</option>
+                <option value="json">JSON Chunks</option>
+                <option value="text">Raw Text</option>
+              </select>
+            </div>
+            
+            <div class="advanced-settings">
+              <div class="form-row">
+                <label for="stream-chunk-size">Buffer Size (characters):</label>
+                <input type="number" id="stream-chunk-size" min="1" max="1000" value="20">
+                <p class="hint">Lower values send smaller chunks more frequently</p>
+              </div>
+              
+              <div class="form-row">
+                <label for="stream-template-select">Response Template:</label>
+                <select id="stream-template-select">
+                  <option value="default">Default Ollama Format</option>
+                  <option value="sse-compatible">SSE Compatible</option>
+                  <option value="nextjs-langchain">Next.js + LangChain</option>
+                  <option value="react-openai-api">OpenAI API Format</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button id="save-streaming-config" class="btn primary">Save Configuration</button>
+            <button id="reset-streaming-config" class="btn secondary">Reset to Defaults</button>
           </div>
         </div>
       </div>

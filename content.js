@@ -195,11 +195,85 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// Inject a proper script file (not inline)
-const scriptTag = document.createElement('script');
-scriptTag.src = chrome.runtime.getURL('bridge-interface.js');
-scriptTag.onload = function() {
-  console.log('Ollama Bridge: Interface script loaded');
-  this.remove();
-};
-(document.head || document.documentElement).appendChild(scriptTag); 
+// Listen for messages from the injected script
+window.addEventListener('message', function(event) {
+  // Check origin to ensure it's from our page
+  if (event.source !== window) return;
+  
+  // Check if the message is for our extension
+  if (event.data.type && event.data.type === 'OLLAMA_API_REQUEST') {
+    // Forward the request to the background script
+    chrome.runtime.sendMessage(event.data, function(response) {
+      // Send the response back to the page
+      window.postMessage({
+        type: 'OLLAMA_API_RESPONSE',
+        requestId: event.data.requestId,
+        success: response?.success || false,
+        data: response?.data || null,
+        error: response?.error || null
+      }, '*');
+    });
+  } else if (event.data.type && event.data.type === 'OLLAMA_STREAMING_REQUEST') {
+    // For streaming requests, we need to set up a port connection
+    setupStreamingConnection(event.data);
+  }
+});
+
+// Function to set up a streaming connection
+function setupStreamingConnection(requestData) {
+  // Connect to the background script
+  const port = chrome.runtime.connect({ name: 'ollama-stream' });
+  
+  // Listen for messages from the background script
+  port.onMessage.addListener(function(message) {
+    if (message.type === 'stream-chunk') {
+      // Forward the chunk to the page
+      window.postMessage({
+        type: 'OLLAMA_STREAM_CHUNK',
+        requestId: requestData.requestId,
+        data: message.data
+      }, '*');
+    } else if (message.type === 'stream-end') {
+      // Signal stream completion
+      window.postMessage({
+        type: 'OLLAMA_STREAM_END',
+        requestId: requestData.requestId
+      }, '*');
+      
+      // Close the port
+      port.disconnect();
+    } else if (message.type === 'stream-error') {
+      // Signal stream error
+      window.postMessage({
+        type: 'OLLAMA_STREAM_ERROR',
+        requestId: requestData.requestId,
+        error: message.error
+      }, '*');
+      
+      // Close the port
+      port.disconnect();
+    }
+  });
+  
+  // Forward the request to the background script
+  chrome.runtime.sendMessage(requestData);
+  
+  // Handle port disconnection
+  port.onDisconnect.addListener(function() {
+    console.log('Ollama Bridge: Stream connection closed');
+  });
+}
+
+// Inject our bridge interface script into the page
+function injectScript() {
+  const script = document.createElement('script');
+  script.src = chrome.runtime.getURL('bridge-interface.js');
+  script.onload = function() {
+    // Script has been injected and loaded
+    this.remove();
+  };
+  (document.head || document.documentElement).appendChild(script);
+}
+
+// Inject the script when the content script loads
+injectScript(); 
