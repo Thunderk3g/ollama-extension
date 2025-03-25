@@ -18,22 +18,179 @@
       </div>
     </header>
     
-    <div class="content">
-      <div class="form-group">
-        <label for="ollama-url">Ollama API URL</label>
-        <input type="text" id="ollama-url" placeholder="http://localhost:11434">
-        <button id="save-url" class="btn">Save</button>
+    <div class="tabs-container">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="connection">Connection</button>
+        <button class="tab-btn" data-tab="endpoints">Endpoints</button>
+        <button class="tab-btn" data-tab="models">Models</button>
       </div>
       
-      <div class="status-container">
-        <div class="status-item">
-          <span class="status-label">Connection:</span>
-          <span id="connection-status">Checking...</span>
+      <div class="tab-content active" id="connection-tab">
+        <div class="form-group">
+          <label for="ollama-url">Ollama API URL</label>
+          <input type="text" id="ollama-url" placeholder="http://localhost:11434">
+          <button id="save-url" class="btn">Save</button>
+        </div>
+        
+        <div class="status-container">
+          <div class="status-item">
+            <span class="status-label">Connection:</span>
+            <span id="connection-status">Checking...</span>
+          </div>
+        </div>
+        
+        <div class="info-box">
+          <p>This extension allows your browser to connect to your local Ollama instance from websites like <a href="https://portfolio-flame-five.vercel.app" target="_blank">portfolio-flame-five.vercel.app</a></p>
         </div>
       </div>
       
-      <div class="info-box">
-        <p>This extension allows your browser to connect to your local Ollama instance from websites like <a href="https://portfolio-flame-five.vercel.app" target="_blank">portfolio-flame-five.vercel.app</a></p>
+      <div class="tab-content" id="endpoints-tab">
+        <div class="endpoint-mappings-container">
+          <h2>Custom Endpoint Mappings</h2>
+          <p class="subtext">Define custom API endpoints to map to Ollama endpoints</p>
+          
+          <!-- Endpoints table -->
+          <div class="endpoints-table-container">
+            <table id="endpoints-table">
+              <thead>
+                <tr>
+                  <th>Source Endpoint</th>
+                  <th>Target Endpoint</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="endpoints-tbody">
+                <!-- Populated dynamically -->
+                <tr class="empty-row">
+                  <td colspan="4">No custom endpoints configured</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <button id="add-endpoint-button" class="btn">Add New Endpoint</button>
+          
+          <!-- Endpoint edit form (hidden by default) -->
+          <div id="endpoint-form" class="endpoint-form hidden">
+            <h3 id="form-title">Add Endpoint Mapping</h3>
+            
+            <div class="form-row">
+              <label for="source-endpoint">Source Endpoint:</label>
+              <input type="text" id="source-endpoint" placeholder="/api/your-endpoint">
+            </div>
+            
+            <div class="form-row">
+              <label for="target-endpoint">Target Endpoint:</label>
+              <select id="target-endpoint">
+                <option value="/api/chat">Chat (/api/chat)</option>
+                <option value="/api/generate">Generate (/api/generate)</option>
+                <option value="/api/embeddings">Embeddings (/api/embeddings)</option>
+              </select>
+            </div>
+            
+            <div class="form-row">
+              <label for="endpoint-description">Description:</label>
+              <input type="text" id="endpoint-description" placeholder="Endpoint purpose">
+            </div>
+            
+            <div class="form-row checkbox-row">
+              <input type="checkbox" id="transform-request" checked>
+              <label for="transform-request">Transform Request</label>
+            </div>
+            
+            <div class="advanced-settings" id="advanced-settings">
+              <div class="form-row">
+                <label for="default-model">Default Model:</label>
+                <input type="text" id="default-model" placeholder="llama3">
+              </div>
+              
+              <div class="form-row">
+                <label for="system-prompt">System Prompt:</label>
+                <textarea id="system-prompt" placeholder="Optional system prompt"></textarea>
+              </div>
+            </div>
+            
+            <div class="form-actions">
+              <button id="save-endpoint" class="btn primary">Save</button>
+              <button id="cancel-endpoint" class="btn secondary">Cancel</button>
+            </div>
+            
+            <input type="hidden" id="mapping-id" value="">
+          </div>
+        </div>
+      </div>
+      
+      <div class="tab-content" id="models-tab">
+        <div class="models-container">
+          <div class="models-header">
+            <h2>Available Models</h2>
+            <button id="refresh-models" class="btn refresh-btn" title="Refresh Models">⟳</button>
+          </div>
+          <p class="subtext">Available models from your Ollama instance</p>
+          
+          <!-- Models list -->
+          <div class="models-list-container">
+            <div id="models-list" class="models-list">
+              <!-- Populated dynamically -->
+              <div class="empty-models">No models found</div>
+            </div>
+          </div>
+          
+          <!-- Default model selection -->
+          <div class="default-model-section">
+            <h3>Default Model</h3>
+            <p class="subtext">This model will be used when no model is specified</p>
+            <div class="form-row">
+              <select id="default-model-select">
+                <!-- Populated dynamically -->
+                <option value="">No models available</option>
+              </select>
+              <button id="save-default-model" class="btn">Set Default</button>
+            </div>
+          </div>
+          
+          <!-- Model parameters form -->
+          <div id="model-params-form" class="model-params-form">
+            <h3>Model Parameters</h3>
+            <p class="subtext">Configure default parameters for <span id="current-model-name">selected model</span></p>
+            
+            <div class="params-grid">
+              <div class="form-row">
+                <label for="param-temperature">Temperature:</label>
+                <input type="range" id="param-temperature" min="0" max="1" step="0.05" value="0.7">
+                <span id="param-temperature-value">0.7</span>
+              </div>
+              
+              <div class="form-row">
+                <label for="param-top-p">Top P:</label>
+                <input type="range" id="param-top-p" min="0" max="1" step="0.05" value="0.9">
+                <span id="param-top-p-value">0.9</span>
+              </div>
+              
+              <div class="form-row">
+                <label for="param-top-k">Top K:</label>
+                <input type="range" id="param-top-k" min="1" max="100" step="1" value="40">
+                <span id="param-top-k-value">40</span>
+              </div>
+              
+              <div class="form-row">
+                <label for="param-max-tokens">Max Tokens:</label>
+                <input type="number" id="param-max-tokens" min="1" max="4096" value="2048">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <label for="param-system-prompt">System Prompt:</label>
+              <textarea id="param-system-prompt" placeholder="System prompt for this model"></textarea>
+            </div>
+            
+            <div class="form-actions">
+              <button id="save-model-params" class="btn primary">Save Parameters</button>
+              <button id="reset-model-params" class="btn secondary">Reset</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     
